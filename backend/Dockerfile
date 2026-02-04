@@ -13,9 +13,6 @@ RUN npm install
 # Bundle app source
 COPY ./backend .
 
-# Copy the .env and .env.development files
-COPY ./backend/.env ./
-
 # Creates a "dist" folder with the production build
 RUN npm run build
 

@@ -17,8 +17,11 @@ services:
   # ==========================================================================
   # LocalStack - Local AWS S3 Emulator
   # ==========================================================================
-  # LocalStack provides a fully functional local AWS cloud stack.
-  # The init script (init-s3.sh) automatically creates the S3 bucket on startup.
+  # LocalStack provides a local S3 emulator for development.
+  # NOTE: LocalStack data does NOT persist between docker compose down/up.
+  #
+  # When using real AWS S3, images persist normally.
+  # Database (users) always persists via the db_data volume.
   #
   # To use real AWS S3 instead:
   # 1. Comment out this service
@@ -32,11 +35,7 @@ services:
       - "127.0.0.1:4566:4566"
     environment:
       - DEBUG=${DEBUG:-0}
-      # Enable persistence to save S3 data across container restarts
-      - PERSISTENCE=1
     volumes:
-      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
-      - "/var/run/docker.sock:/var/run/docker.sock"
       # Mount the init script - runs automatically on container start
       - "./localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh"
     healthcheck:
