@@ -71,6 +71,32 @@ This project uses Docker to simplify the setup process. Follow the steps below t
 
    Go to to the forontend [localhost:3001](http://localhost:3001) and check if the app is up.
 
+## S3 Storage
+
+By default, the project uses **LocalStack** to emulate AWS S3 locally—no AWS account needed.
+
+### LocalStack (Default)
+
+- Data persists in the `./volume/` folder across container restarts
+- To reset S3 data: `rm -rf ./volume && docker compose up`
+
+### Switching to Real AWS S3
+
+1. Update your `.env` file:
+
+   ```env
+   S3_ENDPOINT=
+   S3_PUBLIC_ENDPOINT=
+   AWS_ACCESS_KEY=your-access-key
+   AWS_SECRET_KEY=your-secret-key
+   AWS_BUCKET_REGION=us-east-1
+   AWS_BUCKET_NAME=your-bucket-name
+   ```
+
+2. Comment out the `localstack` service in `docker-compose.yml`
+
+3. Ensure your S3 bucket has CORS configured for browser uploads
+
 ## Additional Notes
 
 - Make sure Docker is installed and running on your system before starting the setup.

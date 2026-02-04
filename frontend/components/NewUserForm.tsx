@@ -80,24 +80,48 @@ export default function NewUserForm({ onSubmit }: NewUserFormProps) {
   }, [formData, documentPhoto]);
 
   const handleInputChange = (
-    e: ChangeEvent<HTMLInputElement | HTMLSelectElement>
+    e: ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) => {
     const { name, value } = e.target;
     setFormData((prevData) => ({ ...prevData, [name]: value }));
     setTouched((prevTouched) => ({ ...prevTouched, [name]: true }));
   };
 
+  // Allowed MIME types (must match backend configuration)
+  const ALLOWED_MIME_TYPES = [
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+  ];
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
   const handlePhotoUpload = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.size > 5 * 1024 * 1024) {
+
+      // Validate file type
+      if (!ALLOWED_MIME_TYPES.includes(file.type)) {
         setErrors((prevErrors) => ({
           ...prevErrors,
-          photo: "File size should not exceed 5MB",
+          documentPhoto: `Invalid file type. Allowed: JPEG, PNG, WebP`,
         }));
         setDocumentPhoto(null);
+        setDocumentPhotoFile(null);
         return;
       }
+
+      // Validate file size
+      if (file.size > MAX_FILE_SIZE) {
+        setErrors((prevErrors) => ({
+          ...prevErrors,
+          documentPhoto: "File size should not exceed 5MB",
+        }));
+        setDocumentPhoto(null);
+        setDocumentPhotoFile(null);
+        return;
+      }
+
       setDocumentPhotoFile(file);
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -113,57 +137,90 @@ export default function NewUserForm({ onSubmit }: NewUserFormProps) {
     }
   };
 
+  /**
+   * Handle form submission with pre-signed URL upload flow
+   *
+   * Pre-Signed URL Upload Flow:
+   * ===========================
+   * 1. Create user record in database (with the S3 key where the image will be stored)
+   * 2. Request a pre-signed URL from our backend
+   * 3. Upload the file directly to S3 using the pre-signed URL
+   *
+   * Benefits of this approach:
+   * - File goes directly from browser to S3 (no server bandwidth needed)
+   * - Server never handles the file data, reducing memory/CPU usage
+   * - AWS credentials stay secure on the backend
+   */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+
     try {
-      if (isFormValid) {
-        const photoUuid = uuidv4().replace(/[^a-zA-Z0-9]/g, "");
-        const userRes = await fetch("/api/users", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ...formData,
-            documentPhoto: "profile/" + formData.name + photoUuid + ".jpg",
-          }),
-        });
+      if (!isFormValid || !documentPhotoFile) return;
 
-        if (userRes.ok) {
-          const userData = await userRes.json();
-          const res = await fetch(
-            `/api/fms/presigned-url/upload?key=profile/${formData.name}${photoUuid}.jpg&contentType=image/jpg`
-          );
+      // Get the file extension from the MIME type
+      const fileExtension = documentPhotoFile.type.split("/")[1] || "jpg";
+      const contentType = documentPhotoFile.type;
+      const fileSize = documentPhotoFile.size;
 
-          if (res.ok) {
-            const url = await res.text();
-            const uploadRes = await fetch(url, {
-              method: "PUT",
-              headers: {
-                "Content-Type": "image/jpg",
-              },
-              body: documentPhotoFile,
-            });
+      // Generate a unique key for the S3 object
+      const photoUuid = uuidv4().replace(/[^a-zA-Z0-9]/g, "");
+      const s3Key = `profile/${formData.name}${photoUuid}.${fileExtension}`;
 
-            if (uploadRes.ok) {
-              toast.success("User has been created successfully!");
-              onSubmit({
-                ...userData,
-                documentPhoto: "profile/" + formData.name + photoUuid + ".jpg",
-              });
-              setIsModalOpen(false);
-              resetForm();
-            } else {
-              toast.error("Failed to upload photo");
-            }
-          }
-        } else {
-          toast.error("Email already exists");
-        }
+      // Step 1: Create the user record in the database
+      // We store the S3 key so we can retrieve the image later
+      const userRes = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...formData,
+          documentPhoto: s3Key,
+        }),
+      });
+
+      if (!userRes.ok) {
+        toast.error("Email already exists");
+        return;
       }
+
+      const userData = await userRes.json();
+
+      // Step 2: Request a pre-signed URL from our backend
+      // The backend generates a temporary URL with embedded AWS credentials
+      // Now includes fileSize for server-side validation and ContentLength enforcement
+      const presignedRes = await fetch(
+        `/api/fms/presigned-url/upload?key=${encodeURIComponent(s3Key)}&contentType=${encodeURIComponent(contentType)}&fileSize=${fileSize}`,
+      );
+
+      if (!presignedRes.ok) {
+        const errorText = await presignedRes.text();
+        toast.error(errorText || "Failed to get upload URL");
+        return;
+      }
+
+      const presignedUrl = await presignedRes.text();
+
+      // Step 3: Upload directly to S3 using the pre-signed URL
+      // This PUT request goes directly to S3, not through our backend
+      // Content-Length header is automatically set by the browser
+      const uploadRes = await fetch(presignedUrl, {
+        method: "PUT",
+        headers: { "Content-Type": contentType },
+        body: documentPhotoFile, // The actual file binary data
+      });
+
+      if (!uploadRes.ok) {
+        toast.error("Failed to upload photo to S3");
+        return;
+      }
+
+      // Success! The image is now in S3
+      toast.success("User has been created successfully!");
+      onSubmit({ ...userData, documentPhoto: s3Key });
+      setIsModalOpen(false);
+      resetForm();
     } catch (error) {
-      console.error("Error creating user", error);
+      console.error("Error creating user:", error);
       toast.error("Failed to create user");
     } finally {
       setIsLoading(false);
@@ -335,7 +392,7 @@ export default function NewUserForm({ onSubmit }: NewUserFormProps) {
                     id="photo"
                     name="photo"
                     onChange={handlePhotoUpload}
-                    accept=".jpg"
+                    accept="image/jpeg,image/png,image/gif,image/webp"
                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
                     required
                   />

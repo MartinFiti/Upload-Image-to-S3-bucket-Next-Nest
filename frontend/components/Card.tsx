@@ -22,18 +22,40 @@ export default function UserCard({ user, handleOpenModal }: UserCardProps) {
   const [documentPhoto, setDocumentPhoto] =
     useState<string>("/defaultUser.jpg");
 
+  /**
+   * Fetch a pre-signed URL to view the user's photo from S3
+   *
+   * Pre-Signed URL View Flow:
+   * =========================
+   * 1. Request a pre-signed URL from our backend (passing the S3 key)
+   * 2. Backend generates a temporary URL (valid for 5 minutes)
+   * 3. Use the URL as the image src to display the photo
+   *
+   * Why use pre-signed URLs for viewing?
+   * - S3 bucket can remain private (no public access needed)
+   * - URLs expire, providing time-limited access
+   * - Each URL is unique and tied to specific credentials
+   */
   useEffect(() => {
     const fetchDocumentPhoto = async () => {
-      const res = await fetch(
-        `/api/fms/presigned-url/view?key=${user.documentPhoto}`
-      );
+      if (!user.documentPhoto) return;
 
-      const resJson = await res.text();
-      setDocumentPhoto(resJson);
+      try {
+        const res = await fetch(
+          `/api/fms/presigned-url/view?key=${encodeURIComponent(user.documentPhoto)}`
+        );
+
+        if (res.ok) {
+          const presignedUrl = await res.text();
+          setDocumentPhoto(presignedUrl);
+        }
+      } catch (error) {
+        console.error("Failed to fetch photo URL:", error);
+      }
     };
 
     fetchDocumentPhoto();
-  }, []);
+  }, [user.documentPhoto]);
 
   return (
     <div
@@ -50,12 +72,22 @@ export default function UserCard({ user, handleOpenModal }: UserCardProps) {
               <ChevronDown className="w-6 h-6" color={"#000000"} />
             )}
             <div className="flex items-center space-x-4">
+              {/* 
+                Using unoptimized={true} for S3/LocalStack images.
+                This tells Next.js to skip server-side image optimization
+                and let the browser fetch directly from the pre-signed URL.
+                
+                Why? Next.js Image Optimizer runs inside the Docker container,
+                where "localhost:4566" doesn't reach LocalStack. The browser
+                can access localhost:4566 directly, so we bypass optimization.
+              */}
               <Image
                 src={documentPhoto}
                 alt={`${user.name}'s photo`}
                 width={60}
                 height={60}
                 className="rounded-full object-cover"
+                unoptimized
               />
               <h2 className="text-xl font-semibold text-gray-800">
                 {user.name}

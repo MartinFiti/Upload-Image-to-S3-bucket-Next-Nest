@@ -14,6 +14,37 @@ services:
       - db_data:/var/lib/mysql
       - ./.env:/.env
 
+  # ==========================================================================
+  # LocalStack - Local AWS S3 Emulator
+  # ==========================================================================
+  # LocalStack provides a fully functional local AWS cloud stack.
+  # The init script (init-s3.sh) automatically creates the S3 bucket on startup.
+  #
+  # To use real AWS S3 instead:
+  # 1. Comment out this service
+  # 2. Set S3_ENDPOINT= (empty) in your .env
+  # 3. Fill in your real AWS credentials
+  # ==========================================================================
+  localstack:
+    container_name: "s3-bucket-localstack-main"
+    image: localstack/localstack:s3-latest
+    ports:
+      - "127.0.0.1:4566:4566"
+    environment:
+      - DEBUG=${DEBUG:-0}
+      # Enable persistence to save S3 data across container restarts
+      - PERSISTENCE=1
+    volumes:
+      - "${LOCALSTACK_VOLUME_DIR:-./volume}:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+      # Mount the init script - runs automatically on container start
+      - "./localstack/init-s3.sh:/etc/localstack/init/ready.d/init-s3.sh"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     container_name: backend
     restart: unless-stopped
@@ -22,15 +53,28 @@ services:
       dockerfile: ./backend/Dockerfile
     env_file: .env
     environment:
+      # Database configuration
       - DB_HOST=mysql_db
       - DB_PORT=3306
       - DB_USER=$DB_USER
       - DB_PASS=$DB_PASS
       - DB_NAME=$DB_NAME
+      # S3 configuration (passed from .env)
+      # S3_ENDPOINT: Internal endpoint for Docker network (e.g., http://localstack:4566)
+      # S3_PUBLIC_ENDPOINT: Public endpoint for browser access (e.g., http://localhost:4566)
+      - S3_ENDPOINT=$S3_ENDPOINT
+      - S3_PUBLIC_ENDPOINT=$S3_PUBLIC_ENDPOINT
+      - AWS_ACCESS_KEY=$AWS_ACCESS_KEY
+      - AWS_SECRET_KEY=$AWS_SECRET_KEY
+      - AWS_BUCKET_REGION=$AWS_BUCKET_REGION
+      - AWS_BUCKET_NAME=$AWS_BUCKET_NAME
     ports:
       - $PORT:3000
     depends_on:
-      - mysql_db
+      mysql_db:
+        condition: service_started
+      localstack:
+        condition: service_healthy
     volumes:
       - ./backend:/src
 
